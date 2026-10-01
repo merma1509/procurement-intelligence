@@ -2,12 +2,12 @@
 tasks/data_engineer.md
 
 # Data files
-data/
-*.csv
-*.parquet
-*.json
-*.xlsx
-*.xls
+#data/
+#*.csv
+#*.parquet
+#*.json
+#*.xlsx
+#*.xls
 
 # Python
 __pycache__/
