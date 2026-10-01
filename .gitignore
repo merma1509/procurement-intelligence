@@ -14,7 +14,7 @@ __pycache__/
 *.py[cod]
 
 # Virtual environments
-procure_venv/
+.venv/
 
 # IDE
 .vscode/
@@ -29,3 +29,7 @@ procure_venv/
 # uv
 .uv/
 uv.lock
+
+# Plans
+plans.md
+.python-version

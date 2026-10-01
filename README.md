@@ -30,23 +30,18 @@ git clone https://github.com/merma1509/procurement-intelligence.git
 cd procurement-intelligence
 ```
 
-2. Create virtual environment with uv:
+2. Install dependencies:
 ```bash
-uv venv procure_venv
+uv sync
 ```
 
 3. Activate the environment:
 ```bash
 # Windows
-procure_venv\Scripts\activate
+.venv\Scripts\activate
 
 # Linux/Mac
-source procure_venv/bin/activate
-```
-
-4. Install dependencies:
-```bash
-uv sync
+source .venv/bin/activate
 ```
 
 Dependencies are managed via `pyproject.toml` using uv.
