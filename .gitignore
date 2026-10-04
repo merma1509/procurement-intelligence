@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environments
+.venv/
+.venv
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Environment variables
+.env
+
+# uv
+.uv/
+uv.lock
+
+# Plans
+plans.md
+.python-version
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Images (generated from analysis)
+*.png
+*.jpg
+image*.png
+image*.jpg
