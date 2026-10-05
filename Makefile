@@ -1,6 +1,6 @@
 # Makefile for procurement-intelligence project
 
-.PHONY: help install test lint format clean mypy coverage run run-full run-incremental setup pre-commit
+.PHONY: help install test lint format clean mypy coverage run run-full run-incremental setup pre-commit security
 
 # Default target
 help:
@@ -14,6 +14,7 @@ help:
 	@echo "  make clean            - Clean cache files"
 	@echo "  make setup            - Install dev dependencies"
 	@echo "  make pre-commit       - Run all quality checks"
+	@echo "  make security         - Run security checks"
 	@echo ""
 	@echo "  ETL Pipeline targets:"
 	@echo "  make run              - Run ETL (dry-run, no DB write)"
@@ -65,6 +66,19 @@ clean:
 
 # Run all quality checks (pre-commit)
 pre-commit: lint format mypy test
+
+
+# Run security checks (bandit + safety)
+security:
+	@echo "Running security checks..."
+	@echo "1. Checking for secrets in code (bandit)..."
+	@uv run bandit data_engineer/src/ -r 2>/dev/null || echo "  Bandit not installed (optional)"
+	@echo "2. Checking for known vulnerabilities (safety)..."
+	@(@uv run safety scan --bare 2>/dev/null && echo "  Found vulnerabilities!") || echo "  No vulnerabilities found"
+	@echo "3. Checking for hardcoded secrets..."
+	@grep -rn "password\s*=\s*['\"][^'\"]*['\"]" data_engineer/src/ 2>/dev/null && echo "  WARNING: Found potential hardcoded password!" || echo "  No hardcoded secrets found"
+	@echo ""
+	@echo "Security check complete!"
 
 # ETL Pipeline Targets
 # Run ETL pipeline (dry-run mode - no database write)

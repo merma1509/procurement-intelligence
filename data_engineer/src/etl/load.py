@@ -148,7 +148,7 @@ class DatabaseConnection:
         if self._connection is not None:
             try:
                 self._connection.close()
-            except Exception:
+            except (psycopg2.Error, OSError):
                 pass
             self._connection = None
             self._in_transaction = False
@@ -183,11 +183,11 @@ class DatabaseConnection:
         if self._connection:
             try:
                 self._connection.rollback()
-            except Exception:
+            except (psycopg2.Error, OSError):
                 pass
             try:
                 self._connection.close()
-            except Exception:
+            except (psycopg2.Error, OSError):
                 pass
         self._connection = None
         self._in_transaction = False
@@ -290,6 +290,20 @@ class ETLBatchLogger:
 
 
 # DATA LOADER WITH TRANSACTION SUPPORT
+# # Allowlist of valid table names for security (SQL injection prevention)
+_VALID_TABLE_NAMES = frozenset(
+    {
+        "dim_date",
+        "dim_product",
+        "dim_region",
+        "dim_channel",
+        "dim_customer",
+        "dim_macro",
+        "fact_sales",
+    }
+)
+
+
 class DataLoader:
     """
     Loads transformed data into Star Schema with error handling
@@ -503,6 +517,12 @@ class DataLoader:
         if not self._connected:
             raise ConnectionError("Database not connected. Call connect() first")
 
+        # Security: Validate table_name to prevent SQL injection
+        if table_name not in _VALID_TABLE_NAMES:
+            raise ValueError(
+                f"Invalid table name: '{table_name}'. Must be one of: {sorted(_VALID_TABLE_NAMES)}"
+            )
+
         loaded = 0
 
         # Prepare column names from DataFrame
@@ -510,11 +530,12 @@ class DataLoader:
         placeholders = ", ".join(["%s"] * len(columns))
         columns_str = ", ".join(columns)
 
+        # Validate table_name is already done in load_dimension with _VALID_TABLE_NAMES allowlist
         insert_query = f"""
             INSERT INTO {table_name} ({columns_str})
             VALUES ({placeholders})
             ON CONFLICT DO NOTHING
-        """
+        """  # nosec B608 - table_name validated via _VALID_TABLE_NAMES allowlist
 
         try:
             cursor = self.db.cursor()
@@ -799,7 +820,7 @@ class IncrementalLoader:
             result["error"] = str(e)
             try:
                 self.loader.disconnect()
-            except Exception:
+            except (psycopg2.Error, OSError):
                 pass
 
         logger.info(f"Incremental load complete: {result}")
@@ -841,7 +862,7 @@ class IncrementalLoader:
                     df["product_id"] = df["sku"].map(product_map).fillna(1).astype(int)
                     cursor.close()
                     db._connection.rollback()  # Exit transaction
-                except Exception:
+                except (psycopg2.Error, OSError):
                     df["product_id"] = 1
             else:
                 df["product_id"] = 1
@@ -893,7 +914,7 @@ class IncrementalLoader:
                 df["channel_id"] = df["channel"].map(channel_map).fillna(1).astype(int)
                 cursor.close()
                 db._connection.rollback()  # Exit transaction
-            except Exception:
+            except (psycopg2.Error, OSError):
                 channel_map = {"pro_dealer": 1, "big_box_diy": 2}
                 df["channel_id"] = df["channel"].map(channel_map).fillna(1).astype(int)
         else:
@@ -909,7 +930,7 @@ class IncrementalLoader:
                 df["customer_id"] = df["customer_type"].map(customer_map).fillna(1).astype(int)
                 cursor.close()
                 db._connection.rollback()  # Exit transaction
-            except Exception:
+            except (psycopg2.Error, OSError):
                 customer_map = {
                     "remodeler": 1,
                     "contractor": 2,
@@ -934,7 +955,7 @@ class IncrementalLoader:
                 )
                 cursor.close()
                 db._connection.rollback()  # Exit transaction
-            except Exception:
+            except (psycopg2.Error, OSError):
                 df["macro_id"] = 1
         else:
             df["macro_id"] = 1
@@ -1012,7 +1033,7 @@ class IncrementalLoader:
             logger.warning(f"Could not load macro dimension: {e}")
             try:
                 db._connection.rollback()
-            except Exception:
+            except (psycopg2.Error, OSError):
                 pass
 
         cursor.close()
@@ -1055,7 +1076,7 @@ class IncrementalLoader:
             logger.warning(f"Could not load regions: {e}")
             try:
                 db._connection.rollback()
-            except Exception:
+            except (psycopg2.Error, OSError):
                 pass
 
         # Channel mapping
@@ -1079,7 +1100,7 @@ class IncrementalLoader:
             logger.warning(f"Could not load channels: {e}")
             try:
                 db._connection.rollback()
-            except Exception:
+            except (psycopg2.Error, OSError):
                 pass
 
         # Customer mapping
@@ -1105,7 +1126,7 @@ class IncrementalLoader:
             logger.warning(f"Could not load customers: {e}")
             try:
                 db._connection.rollback()
-            except Exception:
+            except (psycopg2.Error, OSError):
                 pass
 
         cursor.close()

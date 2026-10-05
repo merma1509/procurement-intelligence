@@ -1,29 +1,62 @@
 """Configuration settings for ETL pipeline
 
 This module centralizes all configuration parameters for the data pipeline,
-including database connections, file paths, validation rules, and batch settings
+including database connections, file paths, validation rules, and batch settings.
+
+Security: Sensitive values (passwords, API keys) should be stored in .env file.
+See .env.example for required variables.
 """
 
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+# This allows storing secrets outside of version control
+load_dotenv()
 
 # Project root directory
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data_engineer" / "data"
 
 
+def _get_env(key: str, default: str = "") -> str:
+    """Safely get environment variable with fallback."""
+    return os.getenv(key, default)
+
+
 @dataclass
 class DatabaseConfig:
-    """PostgreSQL database configuration"""
+    """PostgreSQL database configuration
 
-    host: str = "localhost"
+    Values are loaded from environment variables for security.
+    See .env.example for required variables.
+    """
+
+    host: str = ""
     port: int = 5432
-    database: str = "building_materials"
-    user: str = "mnijonshuti"
+    database: str = ""
+    user: str = ""
     password: str = ""
     schema: str = "public"
+
+    def __post_init__(self):
+        """Load values from environment variables."""
+        # Only override if not already set (allows programmatic override)
+        if not self.host:
+            self.host = _get_env("DB_HOST", "localhost")
+        if not self.port:
+            self.port = int(_get_env("DB_PORT", "5432"))
+        if not self.database:
+            self.database = _get_env("DB_NAME", "building_materials")
+        if not self.user:
+            self.user = _get_env("DB_USER", "")
+        if not self.password:
+            self.password = _get_env("DB_PASSWORD", "")
 
 
 @dataclass
@@ -151,8 +184,10 @@ def get_watermark() -> Optional[str]:
             content = f.read().strip()
             if content:
                 return content
-    except Exception:
-        pass
+    except OSError as e:
+        logging.warning(f"Could not read watermark file: {e}")
+    except UnicodeDecodeError as e:
+        logging.warning(f"Watermark file has invalid encoding: {e}")
 
     return None
 
