@@ -148,7 +148,7 @@ class DatabaseConnection:
         if self._connection is not None:
             try:
                 self._connection.close()
-            except:
+            except Exception:
                 pass
             self._connection = None
             self._in_transaction = False
@@ -183,11 +183,11 @@ class DatabaseConnection:
         if self._connection:
             try:
                 self._connection.rollback()
-            except:
+            except Exception:
                 pass
             try:
                 self._connection.close()
-            except:
+            except Exception:
                 pass
         self._connection = None
         self._in_transaction = False
@@ -333,7 +333,7 @@ class DataLoader:
         unique_dates = pd.to_datetime(df["transaction_date"]).dt.date.unique()
 
         # Day names mapping
-        day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
         for date in unique_dates:
             try:
@@ -418,7 +418,7 @@ class DataLoader:
         logger.info(f"Loading {total_rows:,} rows in {batches} batches")
 
         self.batch_logger.start_batch(f"load_{batches}_batches")
-        
+
         try:
             for i in range(0, total_rows, batch_size):
                 batch = df.iloc[i : i + batch_size]
@@ -538,9 +538,15 @@ class DataLoader:
                     int(row.get("units", 0)),
                     float(row.get("unit_price", 0.0)),
                     float(row.get("revenue", 0.0)),
-                    float(row.get("housing_starts_index", 0)) if pd.notna(row.get("housing_starts_index")) else None,
-                    float(row.get("lumber_price_index", 0)) if pd.notna(row.get("lumber_price_index")) else None,
-                    float(row.get("mortgage_rate", 0)) if pd.notna(row.get("mortgage_rate")) else None,
+                    float(row.get("housing_starts_index", 0))
+                    if pd.notna(row.get("housing_starts_index"))
+                    else None,
+                    float(row.get("lumber_price_index", 0))
+                    if pd.notna(row.get("lumber_price_index"))
+                    else None,
+                    float(row.get("mortgage_rate", 0))
+                    if pd.notna(row.get("mortgage_rate"))
+                    else None,
                 )
             )
 
@@ -706,7 +712,7 @@ class IncrementalLoader:
             total_batches = (len(new_data) + batch_size - 1) // batch_size
 
             self.loader.batch_logger.start_batch(f"incremental_load_{total_batches}_batches")
-            
+
             try:
                 for i in range(0, len(new_data), batch_size):
                     batch = new_data.iloc[i : i + batch_size]
