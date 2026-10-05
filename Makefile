@@ -9,15 +9,17 @@ help:
 	@echo "  make test             - Run all tests"
 	@echo "  make lint             - Run ruff linter"
 	@echo "  make format           - Format code with ruff"
-	@echo "  make mypy             - Run type checking"
+	@echo "  make typecheck        - Run type checking"
 	@echo "  make coverage         - Run tests with coverage"
 	@echo "  make clean            - Clean cache files"
 	@echo "  make setup            - Install dev dependencies"
 	@echo "  make pre-commit       - Run all quality checks"
-	@echo "  make run              - Run ETL pipeline (dry-run)"
-	@echo "  make run-full         - Run ETL pipeline with DB"
-	@echo "  make run-incremental  - Run ETL in incremental mode"
-	@echo "  make run-reload       - Run ETL pipeline full reload"
+	@echo ""
+	@echo "  ETL Pipeline targets:"
+	@echo "  make run              - Run ETL (dry-run, no DB write)"
+	@echo "  make run-full         - Full load to DB (loads all data)"
+	@echo "  make run-incremental  - Incremental load to DB (only new data)"
+	@echo "  make run-reload       - Full reload (clears tables, loads fresh)"
 
 # Install dependencies
 install:
@@ -42,7 +44,7 @@ format:
 	ruff check data_engineer/src/ --fix
 
 # Type checking (mypy)
-mypy:
+typecheck:
 	@echo "Running mypy (informational)..."
 	@uv run mypy data_engineer/src/ || true
 
@@ -64,20 +66,23 @@ clean:
 # Run all quality checks (pre-commit)
 pre-commit: lint format mypy test
 
-# Run ETL pipeline (dry-run mode)
+# ETL Pipeline Targets
+# Run ETL pipeline (dry-run mode - no database write)
 run:
-	cd data_engineer && uv run python -m src.etl.main
+	cd data_engineer && uv run python -m src.etl
 
-# Run ETL pipeline with database
+# Run ETL pipeline in full mode (overwrites existing data with UPSERT)
 run-full:
 	@echo "Note: Requires PostgreSQL connection"
-	@cd data_engineer && uv run python -m src.etl.main --db || echo "Error: PostgreSQL not available"
+	@cd data_engineer && uv run python -m src.etl --db --full || echo "Error: PostgreSQL not available"
 
-# Run ETL pipeline in incremental mode
+# Run ETL pipeline in incremental mode (only loads new data since last run)
 run-incremental:
-	@cd data_engineer && uv run python -m src.etl.main --db --incremental
+	@cd data_engineer && uv run python -m src.etl --db --incremental || echo "Error: PostgreSQL not available"
 
-# Run ETL pipeline full reload
+# Run ETL pipeline full reload (clears watermark and does full load)
 run-reload:
 	@echo "Note: Requires PostgreSQL connection"
-	@cd data_engineer && uv run python -m src.etl.main --db --full || echo "Error: PostgreSQL not available"
+	@echo "Resetting watermark for full reload..."
+	@rm -f data_engineer/.watermark
+	@cd data_engineer && uv run python -m src.etl --db --full || echo "Error: PostgreSQL not available"

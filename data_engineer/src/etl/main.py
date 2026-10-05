@@ -198,7 +198,12 @@ class ETLPipeline:
                 logger.info("Loading dimension tables...")
                 self.loader.load_dates(self.transactions_clean)
 
-                self.loader.load_products(self.transactions_clean)
+                # Load products and get SKU to product_id mapping
+                sku_to_product_id = self.loader.load_products(self.transactions_clean)
+
+                # Ensure all dimension tables have required data
+                inc_loader = IncrementalLoader(self.loader)
+                inc_loader._ensure_dimension_data(self.transactions_clean)
 
                 # Load fact table
                 logger.info("Loading fact_sales table...")
@@ -206,9 +211,10 @@ class ETLPipeline:
                 # Set up batch loading
                 self.loader.batch_logger.start_batch("full_load")
 
-                # Resolve FKs
-                inc_loader = IncrementalLoader(self.loader)
-                data_with_fks = inc_loader._resolve_fk_ids(self.transactions_clean)
+                # Resolve FKs with SKU mapping
+                data_with_fks = inc_loader._resolve_fk_ids(
+                    self.transactions_clean, sku_to_product_id
+                )
 
                 try:
                     batch_size = batch_config.batch_size
@@ -283,10 +289,11 @@ if __name__ == "__main__":
     import sys
 
     # Parse command line arguments
-    incremental = "--full" not in sys.argv  # Default to incremental
     use_db = "--db" in sys.argv
+    full_mode = "--full" in sys.argv
+    incremental = not full_mode  # Default to incremental, full mode with --full flag
 
-    if "--full" in sys.argv:
+    if full_mode:
         logger.info("Running in FULL LOAD mode")
     else:
         logger.info("Running in INCREMENTAL mode")

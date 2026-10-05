@@ -364,38 +364,68 @@ class DataLoader:
         logger.info(f"Loaded {loaded} dates into dim_date")
         return loaded
 
-    def load_products(self, df: pd.DataFrame) -> int:
-        """Load unique products into dim_product table"""
-        if df.empty:
-            return 0
+    def load_products(self, df: pd.DataFrame) -> dict[str, int]:
+        """Load unique products into dim_product table
 
-        loaded = 0
+        Returns:
+            Dict mapping SKU to product_id
+        """
+        if df.empty:
+            return {}
+
+        sku_to_id: dict[str, int] = {}
+        unique_skus = df["sku"].unique()
+
         if not self.db._connection:
-            return 0
+            # Create default mapping for mock mode
+            for sku in unique_skus:
+                sku_to_id[sku] = len(sku_to_id) + 1
+            return sku_to_id
 
         cursor = self.db.cursor()
 
-        # Get unique SKUs
-        unique_skus = df["sku"].unique()
+        # First, get existing product IDs from database
+        try:
+            cursor.execute("SELECT product_id, sku FROM dim_product")
+            for row in cursor.fetchall():
+                sku_to_id[row[1]] = row[0]
+        except Exception as e:
+            logger.warning(f"Could not fetch existing products: {e}")
 
-        for sku in unique_skus:
+        # Now insert new products (not existing in sku_to_id)
+        new_skus = [sku for sku in unique_skus if sku not in sku_to_id]
+
+        if new_skus:
+            logger.info(f"Inserting {len(new_skus)} new products...")
+
+            # Use executemany for batch insert
+            for sku in new_skus:
+                try:
+                    sku_prefix = sku[:3] if len(sku) >= 3 else "UNK"
+                    cursor.execute(
+                        """
+                        INSERT INTO dim_product (sku, sku_prefix, product_name, is_active)
+                        VALUES (%s, %s, %s, true)
+                        RETURNING product_id
+                        """,
+                        (sku, sku_prefix, f"Product {sku}"),
+                    )
+                    result = cursor.fetchone()
+                    if result:
+                        sku_to_id[sku] = result[0]
+                except Exception as e:
+                    logger.error(f"Failed to insert product {sku}: {e}")
+                    sku_to_id[sku] = len(sku_to_id) + 1
+
+            # Commit the product inserts to make them visible
             try:
-                sku_prefix = sku[:3] if len(sku) >= 3 else "UNK"
-                cursor.execute(
-                    """
-                    INSERT INTO dim_product (sku, sku_prefix, product_name, is_active)
-                    VALUES (%s, %s, %s, true)
-                    ON CONFLICT (sku) DO NOTHING
-                    """,
-                    (sku, sku_prefix, f"Product {sku}"),
-                )
-                loaded += 1
+                self.db._connection.commit()
             except Exception as e:
-                logger.error(f"Failed to insert product {sku}: {e}")
+                logger.warning(f"Could not commit product inserts: {e}")
 
         cursor.close()
-        logger.info(f"Loaded {loaded} products into dim_product")
-        return loaded
+        logger.info(f"Products loaded: {len(sku_to_id)} total in mapping")
+        return sku_to_id
 
     def load_batch_with_rollback(
         self, df: pd.DataFrame, load_func, batch_size: int = None
@@ -686,6 +716,8 @@ class IncrementalLoader:
             if macro_df is not None and not macro_df.empty:
                 logger.info(f"Loading macro data: {len(macro_df)} rows")
                 result["macro_rows"] = len(macro_df)
+                # Load macro dimension table
+                self._load_macro_dimension(macro_df)
 
             # Filter to new data only
             new_data = self.get_new_data(transactions_df)
@@ -701,11 +733,14 @@ class IncrementalLoader:
             self.loader.load_dates(new_data)
 
             logger.info("Loading new products into dim_product...")
-            self.loader.load_products(new_data)
+            sku_to_product_id = self.loader.load_products(new_data)
 
-            # Resolve dimension FKs
+            # Load regions, channels, customers if not exists
+            self._ensure_dimension_data(new_data)
+
+            # Resolve dimension FKs with SKU mapping
             logger.info(f"Resolving dimension FKs for {len(new_data)} rows...")
-            new_data = self._resolve_fk_ids(new_data)
+            new_data = self._resolve_fk_ids(new_data, sku_to_product_id)
 
             # Load in batches
             batch_size = batch_config.batch_size
@@ -765,16 +800,38 @@ class IncrementalLoader:
             return self.loader.db
         return None
 
-    def _resolve_fk_ids(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _resolve_fk_ids(self, df: pd.DataFrame, sku_to_product_id: dict = None) -> pd.DataFrame:
         """
         Resolve foreign key IDs by looking up dimension tables.
 
         Adds columns: date_id, product_id, region_id, channel_id, customer_id, macro_id
+
+        Args:
+            df: DataFrame with transaction data
+            sku_to_product_id: Optional mapping of SKU to product_id (from load_products)
         """
         df = df.copy()
 
         # Date FK - use date_id format YYYYMMDD
         df["date_id"] = pd.to_datetime(df["transaction_date"]).dt.strftime("%Y%m%d").astype(int)
+
+        # Product FK - use provided mapping or lookup from database
+        if sku_to_product_id:
+            df["product_id"] = df["sku"].map(sku_to_product_id).fillna(1).astype(int)
+        else:
+            db = self._get_db_connection()
+            if db and db._connection:
+                try:
+                    cursor = db.cursor()
+                    cursor.execute("SELECT product_id, sku FROM dim_product")
+                    product_map = {row[1]: row[0] for row in cursor.fetchall()}
+                    df["product_id"] = df["sku"].map(product_map).fillna(1).astype(int)
+                    cursor.close()
+                    db._connection.rollback()  # Exit transaction
+                except Exception:
+                    df["product_id"] = 1
+            else:
+                df["product_id"] = 1
 
         # Region FK - lookup from database
         db = self._get_db_connection()
@@ -851,20 +908,6 @@ class IncrementalLoader:
             customer_map = {"remodeler": 1, "contractor": 2, "homeowner_diy": 3, "homebuilder": 4}
             df["customer_id"] = df["customer_type"].map(customer_map).fillna(1).astype(int)
 
-        # Product FK - lookup from database
-        if db and db._connection:
-            try:
-                cursor = db.cursor()
-                cursor.execute("SELECT product_id, sku FROM dim_product")
-                product_map = {row[1]: row[0] for row in cursor.fetchall()}
-                df["product_id"] = df["sku"].map(product_map).fillna(1).astype(int)
-                cursor.close()
-                db._connection.rollback()  # Exit transaction
-            except Exception:
-                df["product_id"] = 1
-        else:
-            df["product_id"] = 1
-
         # Macro FK - lookup from database
         if db and db._connection:
             try:
@@ -900,6 +943,159 @@ class IncrementalLoader:
             logger.info("Watermark reset - next run will do full load")
         else:
             logger.info("No watermark file exists")
+
+    def _load_macro_dimension(self, macro_df: pd.DataFrame):
+        """Load macro dimension table from transformed macro data"""
+        if macro_df is None or macro_df.empty:
+            return
+
+        db = self._get_db_connection()
+        if not db or not db._connection:
+            logger.warning("No database connection for macro dimension loading")
+            return
+
+        cursor = db.cursor()
+
+        try:
+            for _, row in macro_df.iterrows():
+                try:
+                    # Column is week_date but we need week for the table
+                    week_date = row.get("week_date", row.get("week"))
+                    cursor.execute(
+                        """
+                        INSERT INTO dim_macro (
+                            week, housing_starts_index, lumber_price_index,
+                            mortgage_rate, season_factor, housing_momentum,
+                            lumber_volatility, data_source
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (week) DO UPDATE SET
+                            housing_starts_index = EXCLUDED.housing_starts_index,
+                            lumber_price_index = EXCLUDED.lumber_price_index,
+                            mortgage_rate = EXCLUDED.mortgage_rate,
+                            season_factor = EXCLUDED.season_factor,
+                            housing_momentum = EXCLUDED.housing_momentum,
+                            lumber_volatility = EXCLUDED.lumber_volatility,
+                            updated_at = CURRENT_TIMESTAMP
+                        RETURNING macro_id
+                        """,
+                        (
+                            week_date,
+                            row.get("housing_starts_index"),
+                            row.get("lumber_price_index"),
+                            row.get("mortgage_rate"),
+                            row.get("season_factor", 1.0),
+                            row.get("housing_momentum", 0.0),
+                            row.get("lumber_volatility", 0.0),
+                            "macro_drivers_weekly.csv",
+                        ),
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not insert macro row: {e}")
+
+            db._connection.commit()
+            logger.info("Macro dimension loaded")
+        except Exception as e:
+            logger.warning(f"Could not load macro dimension: {e}")
+            try:
+                db._connection.rollback()
+            except Exception:
+                pass
+
+        cursor.close()
+
+    def _ensure_dimension_data(self, df: pd.DataFrame):
+        """Ensure all dimension tables have required data"""
+        db = self._get_db_connection()
+        if not db or not db._connection:
+            logger.warning("No database connection for dimension loading")
+            return
+
+        cursor = db.cursor()
+
+        # Region mapping (with census_division)
+        regions = [
+            ("East_North_Central", "East North Central", 1),
+            ("Middle_Atlantic", "Middle Atlantic", 2),
+            ("Pacific", "Pacific", 3),
+            ("West_South_Central", "West South Central", 4),
+            ("Mountain", "Mountain", 5),
+            ("South_Atlantic", "South Atlantic", 6),
+            ("West_North_Central", "West North Central", 7),
+            ("East_South_Central", "East South Central", 8),
+            ("New_England", "New England", 9),
+        ]
+
+        try:
+            for name, division, rid in regions:
+                cursor.execute(
+                    """
+                    INSERT INTO dim_region (region_id, region_name, region_code, census_division)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (region_id) DO NOTHING
+                    """,
+                    (rid, name, name[:3].upper(), division),
+                )
+            db._connection.commit()
+            logger.info("Regions loaded")
+        except Exception as e:
+            logger.warning(f"Could not load regions: {e}")
+            try:
+                db._connection.rollback()
+            except Exception:
+                pass
+
+        # Channel mapping
+        channels = [
+            ("pro_dealer", "Professional Dealer", "PRO", 1),
+            ("big_box_diy", "Big Box DIY", "BBX", 2),
+        ]
+        try:
+            for name, ch_type, code, cid in channels:
+                cursor.execute(
+                    """
+                    INSERT INTO dim_channel (channel_id, channel_name, channel_type, channel_code)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (channel_id) DO NOTHING
+                    """,
+                    (cid, name, ch_type, code),
+                )
+            db._connection.commit()
+            logger.info("Channels loaded")
+        except Exception as e:
+            logger.warning(f"Could not load channels: {e}")
+            try:
+                db._connection.rollback()
+            except Exception:
+                pass
+
+        # Customer mapping
+        customers = [
+            ("remodeler", "Remodeler", 1),
+            ("contractor", "Contractor", 2),
+            ("homeowner_diy", "Homeowner DIY", 3),
+            ("homebuilder", "Homebuilder", 4),
+        ]
+        try:
+            for name, segment, cid in customers:
+                cursor.execute(
+                    """
+                    INSERT INTO dim_customer (customer_id, customer_type, segment)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (customer_id) DO NOTHING
+                    """,
+                    (cid, name, segment),
+                )
+            db._connection.commit()
+            logger.info("Customers loaded")
+        except Exception as e:
+            logger.warning(f"Could not load customers: {e}")
+            try:
+                db._connection.rollback()
+            except Exception:
+                pass
+
+        cursor.close()
 
 
 def load_data(
