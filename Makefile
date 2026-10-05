@@ -45,8 +45,8 @@ format:
 
 # Type checking (mypy)
 typecheck:
-	@echo "Running mypy (informational)..."
-	@uv run mypy data_engineer/src/ || true
+	@echo "Running mypy..."
+	@uv run mypy data_engineer/src/ --check-untyped-defs || true
 
 # Run tests with coverage
 coverage:

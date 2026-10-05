@@ -243,7 +243,7 @@ class ETLBatchLogger:
         self.errors: list[dict[str, Any]] = []
         self.dlq = DeadLetterQueue()
 
-    def start_batch(self, batch_name: str) -> int:
+    def start_batch(self, batch_name: str) -> str:
         """Start a new batch"""
         self.batch_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.start_time = datetime.now()
@@ -271,11 +271,14 @@ class ETLBatchLogger:
 
     def finish_batch(self) -> dict[str, Any]:
         """Get batch summary"""
-        duration = (datetime.now() - self.start_time).total_seconds()
+        if self.start_time is None:
+            self.start_time = datetime.now()
+        end_time = datetime.now()
+        duration = (end_time - self.start_time).total_seconds()
         summary = {
-            "batch_id": self.batch_id,
+            "batch_id": self.batch_id or "unknown",
             "start_time": self.start_time.isoformat(),
-            "end_time": datetime.now().isoformat(),
+            "end_time": end_time.isoformat(),
             "duration_seconds": duration,
             "rows_inserted": self.rows_inserted,
             "rows_updated": self.rows_updated,
@@ -551,7 +554,12 @@ class DataLoader:
         rejected = 0
 
         # Enable autocommit for this batch
-        self.db._connection.autocommit = True
+        if self.db._connection is not None:
+            self.db._connection.autocommit = True
+        else:
+            logger.warning("No database connection, skipping fact_sales load")
+            return {"inserted": 0, "updated": 0, "rejected": 0}
+
         cursor = self.db.cursor()
 
         # Prepare batch data
@@ -682,6 +690,11 @@ class IncrementalLoader:
         df = df.copy()
         df["transaction_date"] = pd.to_datetime(df["transaction_date"]).dt.date
         max_date = df["transaction_date"].max()
+
+        # Handle None case
+        if max_date is None:
+            logger.warning("No dates found in DataFrame, cannot update watermark")
+            return
 
         # Format as string
         if isinstance(max_date, pd.Timestamp):
