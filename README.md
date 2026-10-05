@@ -8,13 +8,14 @@ Recruitment tasks for the Astra workshop (MIEM Moscow Institute of Electronics a
 - Design database schema for construction materials sales data
 - Build ETL pipeline with data validation and incremental updates
 - Implement error handling and transaction rollback mechanisms
-- [Task Details](tasks/data_engineer.md)
+- [Task Details & Solution](data_engineer/TASK.md)
+- [Documentation](data_engineer/README.md)
 
 ### AI Specialist
 - Build classification model to predict NHL hockey team success
 - Perform exploratory data analysis and feature engineering
 - Implement time-series aware train/validation/test split
-- [Task Notebook](tasks/ai_specialist.ipynb)
+- [Task Notebook](ai_specialist/ai_specialist_solution.ipynb)
 
 ## Setup
 
