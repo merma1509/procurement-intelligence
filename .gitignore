@@ -39,3 +39,4 @@ image*.jpg
 
 htmlcov/
 .coverage
+data_engineer/data/errors/dead_letter_queue.jsonl
